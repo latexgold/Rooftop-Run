@@ -2,7 +2,7 @@
 
 Rooftop Run is an original offline 2.5D Android platform shooter. Sprint across city rooftops, jump gaps, dash between platforms, clear sentries with touch-friendly assisted aiming, and reach the extraction beacon. The courier and enemies are stylized, original vector-drawn characters.
 
-## Android Studio build
+## Build the Android APK
 
 1. Install Android Studio and JDK 17.
 2. Clone this repository.
@@ -16,7 +16,7 @@ No Godot, game engine, network permission, account, or third-party game library 
 ## Controls
 
 - ◀ / ▶: move
-- JUMP: jump (tap for a short hop)
+- JUMP: jump
 - DASH: burst across a gap or dodge
 - SHOOT: hold to fire; aim assist selects the nearest target ahead
 - Pause: resume, mission board, or field guide
