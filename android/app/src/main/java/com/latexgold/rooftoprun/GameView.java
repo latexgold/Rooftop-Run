@@ -14,12 +14,11 @@ import android.view.View;
 import java.util.ArrayList;
 import java.util.Locale;
 
-/** Offline 2.5D rooftop platform shooter drawn on a Canvas. */
+/** A more polished offline rooftop runner with touch controls, better pacing, and cleaner UI flow. */
 public final class GameView extends View {
     private static final float W = 1280f;
     private static final float H = 720f;
     private static final float GRAVITY = 1850f;
-
     private static final int MENU = 0;
     private static final int PLAY = 1;
     private static final int PAUSE = 2;
@@ -45,6 +44,7 @@ public final class GameView extends View {
     private int tokensTotal = 0;
     private int tokensThisRun = 0;
     private int combo = 0;
+    private int score = 0;
     private int leftId = -1;
     private int rightId = -1;
     private int jumpId = -1;
@@ -74,7 +74,7 @@ public final class GameView extends View {
     private boolean jumpQueued = false;
     private boolean dashQueued = false;
 
-    private int worldW = 4000;
+    private int worldW = 4400;
     private float checkpointX = 100f;
     private float checkpointY = 543f;
     private long lastFrame = 0L;
@@ -195,7 +195,7 @@ public final class GameView extends View {
             noticeTime = Math.max(0f, noticeTime - dt);
         }
 
-        drawScene(c);
+        render(c);
         c.restore();
 
         if (screen == PLAY) {
@@ -208,6 +208,7 @@ public final class GameView extends View {
         screen = PLAY;
         kills = 0;
         lives = 3;
+        score = 0;
         tokensThisRun = 0;
         combo = 0;
         comboTime = 0f;
@@ -222,9 +223,11 @@ public final class GameView extends View {
         fireWait = 0f;
         dashWait = 0f;
         invuln = 0f;
-        show("MISSION START", 1.0f);
+        jumpQueued = false;
+        dashQueued = false;
         shots.clear();
         makeWorld();
+        show("MISSION START", 1.0f);
     }
 
     private void update(float dt) {
@@ -311,6 +314,7 @@ public final class GameView extends View {
                 token.taken = true;
                 tokensTotal++;
                 tokensThisRun++;
+                score += 50;
                 prefs.edit().putInt("tokens", tokensTotal).apply();
                 show("TOKEN +1", 0.8f);
             }
@@ -344,9 +348,11 @@ public final class GameView extends View {
                     hit = true;
                     combo++;
                     comboTime = 1.25f;
+                    score += 15;
                     if (enemy.hp <= 0f) {
                         enemy.alive = false;
                         kills++;
+                        score += 120;
                         show("TARGET DOWN", 0.45f);
                     }
                     break;
@@ -388,10 +394,11 @@ public final class GameView extends View {
     }
 
     private int accent() {
-        if (mission / 4 == 0) {
+        int district = mission / 4;
+        if (district == 0) {
             return Color.rgb(255, 189, 99);
         }
-        if (mission / 4 == 1) {
+        if (district == 1) {
             return Color.rgb(99, 229, 204);
         }
         return Color.rgb(173, 145, 255);
@@ -399,15 +406,15 @@ public final class GameView extends View {
 
     private void fire() {
         Enemy best = null;
-        float score = Float.MAX_VALUE;
+        float scoreValue = Float.MAX_VALUE;
 
         for (Enemy enemy : enemies) {
             if (enemy.alive) {
                 float dx = (enemy.x - x) * facing;
                 if (dx > 0f) {
                     float q = dx + Math.abs(enemy.y - y) * 1.35f;
-                    if (q < score && q < 760f) {
-                        score = q;
+                    if (q < scoreValue && q < 760f) {
+                        scoreValue = q;
                         best = enemy;
                     }
                 }
@@ -460,7 +467,7 @@ public final class GameView extends View {
         }
     }
 
-    private void drawScene(Canvas c) {
+    private void render(Canvas c) {
         switch (screen) {
             case MENU:
                 drawMenu(c);
@@ -468,7 +475,6 @@ public final class GameView extends View {
             case PLAY:
                 drawSky(c);
                 drawWorld(c);
-                drawHud(c);
                 drawTouchButtons(c);
                 break;
             case PAUSE:
@@ -538,19 +544,23 @@ public final class GameView extends View {
             }
         }
 
+        for (Shot shot : shots) {
+            paint.setColor(0xFFFFD66E);
+            c.drawCircle(shot.x, shot.y, 6f, paint);
+        }
+
         drawPlayer(c, x, y);
         drawExit(c, worldW - 110f, 530f, color);
         c.restore();
-
         drawHud(c);
     }
 
     private void drawHud(Canvas c) {
-        panel(c, 18f, 15f, 475f, 82f, 0xCC101B30);
+        panel(c, 18f, 15f, 520f, 82f, 0xCC101B30);
         text(c, String.format(Locale.US, "DISTRICT %02d   ·   MISSION %02d", mission / 4 + 1, mission + 1),
                 18f, Color.WHITE, 34f, 45f);
-        text(c, String.format(Locale.US, "LIVES %d   ·   TOKENS %d   ·   KILLS %d/%d",
-                        lives, tokensTotal, kills, targets()), 18f, 0xFFB9CBE4, 34f, 72f);
+        text(c, String.format(Locale.US, "LIVES %d   ·   TOKEN %d   ·   SCORE %d   ·   KILLS %d/%d",
+                        lives, tokensTotal, score, kills, targets()), 18f, 0xFFB9CBE4, 34f, 72f);
         if (noticeTime > 0f) {
             text(c, notice, 24f, 0xFFFFBD63, 650f, 52f);
         }
@@ -941,6 +951,7 @@ public final class GameView extends View {
         roofs.add(new Platform(2750f, 420f, 208f));
         roofs.add(new Platform(3000f, 520f, 320f));
         roofs.add(new Platform(3420f, 490f, 230f));
+        roofs.add(new Platform(3780f, 440f, 260f));
 
         flags.clear();
         flags.add(new Flag(280f, 512f));
@@ -956,6 +967,7 @@ public final class GameView extends View {
         tokens.add(new Token(1605f, 340f));
         tokens.add(new Token(2280f, 392f));
         tokens.add(new Token(3010f, 472f));
+        tokens.add(new Token(3620f, 402f));
 
         enemies.clear();
         enemies.add(new Enemy(480f, 510f, 440f, 90f));
@@ -963,5 +975,6 @@ public final class GameView extends View {
         enemies.add(new Enemy(1765f, 350f, 1765f, 85f));
         enemies.add(new Enemy(2560f, 470f, 2560f, 110f));
         enemies.add(new Enemy(3310f, 450f, 3310f, 95f));
+        enemies.add(new Enemy(3920f, 410f, 3920f, 115f));
     }
 }
