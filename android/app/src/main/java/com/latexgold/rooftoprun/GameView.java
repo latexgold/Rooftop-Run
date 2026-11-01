@@ -14,11 +14,12 @@ import android.view.View;
 import java.util.ArrayList;
 import java.util.Locale;
 
-/** A more polished offline rooftop runner with touch controls, better pacing, and cleaner UI flow. */
+/** Skyline Sprint is a cleaner, more stable rooftop runner built on the same core idea. */
 public final class GameView extends View {
-    private static final float W = 1280f;
-    private static final float H = 720f;
+    private static final float VIEW_W = 1280f;
+    private static final float VIEW_H = 720f;
     private static final float GRAVITY = 1850f;
+
     private static final int MENU = 0;
     private static final int PLAY = 1;
     private static final int PAUSE = 2;
@@ -29,22 +30,22 @@ public final class GameView extends View {
 
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final SharedPreferences prefs;
-    private final ArrayList<Platform> roofs = new ArrayList<>();
+    private final ArrayList<Platform> platforms = new ArrayList<>();
     private final ArrayList<Enemy> enemies = new ArrayList<>();
+    private final ArrayList<Pickup> pickups = new ArrayList<>();
+    private final ArrayList<Checkpoint> checkpoints = new ArrayList<>();
     private final ArrayList<Shot> shots = new ArrayList<>();
-    private final ArrayList<Token> tokens = new ArrayList<>();
-    private final ArrayList<Flag> flags = new ArrayList<>();
 
     private int screen = MENU;
     private int guideBack = MENU;
     private int mission = 0;
     private int unlocked = 0;
-    private int kills = 0;
+    private int score = 0;
     private int lives = 3;
     private int tokensTotal = 0;
     private int tokensThisRun = 0;
+    private int kills = 0;
     private int combo = 0;
-    private int score = 0;
     private int leftId = -1;
     private int rightId = -1;
     private int jumpId = -1;
@@ -52,31 +53,35 @@ public final class GameView extends View {
     private int shootId = -1;
     private int facing = 1;
 
-    private float x = 100f;
-    private float y = 543f;
-    private float vx = 0f;
-    private float vy = 0f;
-    private float cam = 0f;
+    private float worldW = 4200f;
+    private float playerX = 120f;
+    private float playerY = 520f;
+    private float playerW = 30f;
+    private float playerH = 42f;
+    private float playerVx = 0f;
+    private float playerVy = 0f;
+    private float camX = 0f;
     private float clock = 0f;
     private float invuln = 0f;
-    private float fireWait = 0f;
-    private float dashWait = 0f;
+    private float fireCooldown = 0f;
+    private float dashCooldown = 0f;
     private float comboTime = 0f;
     private float noticeTime = 0f;
     private float shake = 0f;
+    private float checkpointX = 120f;
+    private float checkpointY = 520f;
+    private float gateX = worldW - 160f;
+    private float gateY = 500f;
 
-    private boolean left = false;
-    private boolean right = false;
+    private boolean leftHeld = false;
+    private boolean rightHeld = false;
     private boolean jumpHeld = false;
     private boolean shootHeld = false;
     private boolean grounded = false;
-    private boolean doubleJump = true;
     private boolean jumpQueued = false;
     private boolean dashQueued = false;
+    private boolean doubleJumpUnlocked = false;
 
-    private int worldW = 4400;
-    private float checkpointX = 100f;
-    private float checkpointY = 543f;
     private long lastFrame = 0L;
     private String notice = "READY";
 
@@ -84,62 +89,67 @@ public final class GameView extends View {
         final float x;
         final float y;
         final float w;
+        final float h;
 
-        Platform(float x, float y, float w) {
+        Platform(float x, float y, float w, float h) {
             this.x = x;
             this.y = y;
             this.w = w;
+            this.h = h;
         }
     }
 
     private static final class Enemy {
         float x;
         float y;
-        final float home;
-        float v;
-        float hp = 2f;
+        final float minX;
+        final float maxX;
+        float vx;
+        final float h = 32f;
+        final float w = 28f;
         boolean alive = true;
 
-        Enemy(float x, float y, float home, float v) {
+        Enemy(float x, float y, float minX, float maxX, float vx) {
             this.x = x;
             this.y = y;
-            this.home = home;
-            this.v = v;
+            this.minX = minX;
+            this.maxX = maxX;
+            this.vx = vx;
+        }
+    }
+
+    private static final class Pickup {
+        final float x;
+        final float y;
+        boolean taken = false;
+
+        Pickup(float x, float y) {
+            this.x = x;
+            this.y = y;
+        }
+    }
+
+    private static final class Checkpoint {
+        final float x;
+        final float y;
+        boolean active = false;
+
+        Checkpoint(float x, float y) {
+            this.x = x;
+            this.y = y;
         }
     }
 
     private static final class Shot {
         float x;
         float y;
-        float v;
-        float life = 1.1f;
+        float vx;
+        float life = 1.2f;
 
-        Shot(float x, float y, float v) {
+        Shot(float x, float y, float vx) {
             this.x = x;
             this.y = y;
-            this.v = v;
-        }
-    }
-
-    private static final class Token {
-        final float x;
-        final float y;
-        boolean taken = false;
-
-        Token(float x, float y) {
-            this.x = x;
-            this.y = y;
-        }
-    }
-
-    private static final class Flag {
-        final float x;
-        final float y;
-        boolean active = false;
-
-        Flag(float x, float y) {
-            this.x = x;
-            this.y = y;
+            this.vx = vx;
         }
     }
 
@@ -149,7 +159,7 @@ public final class GameView extends View {
         prefs = context.getSharedPreferences("rooftop_progress", Context.MODE_PRIVATE);
         unlocked = prefs.getInt("unlocked", 0);
         tokensTotal = prefs.getInt("tokens", 0);
-        makeWorld();
+        buildWorld();
     }
 
     public void pauseGame() {
@@ -179,8 +189,8 @@ public final class GameView extends View {
             return;
         }
 
-        float sx = getWidth() / W;
-        float sy = getHeight() / H;
+        float sx = getWidth() / VIEW_W;
+        float sy = getHeight() / VIEW_H;
         c.save();
         c.scale(sx, sy);
 
@@ -190,7 +200,7 @@ public final class GameView extends View {
         clock += dt;
 
         if (screen == PLAY) {
-            update(dt);
+            updateGame(dt);
         } else if (noticeTime > 0f) {
             noticeTime = Math.max(0f, noticeTime - dt);
         }
@@ -206,129 +216,155 @@ public final class GameView extends View {
     private void startMission(int index) {
         mission = Math.max(0, Math.min(11, index));
         screen = PLAY;
-        kills = 0;
         lives = 3;
         score = 0;
+        kills = 0;
         tokensThisRun = 0;
         combo = 0;
-        comboTime = 0f;
-        x = 100f;
-        y = 543f;
-        checkpointX = x;
-        checkpointY = y;
-        vx = 0f;
-        vy = 0f;
-        cam = 0f;
-        grounded = false;
-        fireWait = 0f;
-        dashWait = 0f;
+        playerX = 120f;
+        playerY = 520f;
+        playerVx = 0f;
+        playerVy = 0f;
+        checkpointX = playerX;
+        checkpointY = playerY;
         invuln = 0f;
+        fireCooldown = 0f;
+        dashCooldown = 0f;
+        grounded = false;
         jumpQueued = false;
         dashQueued = false;
-        shots.clear();
-        makeWorld();
+        buildWorld();
         show("MISSION START", 1.0f);
     }
 
-    private void update(float dt) {
+    private void updateGame(float dt) {
         if (noticeTime > 0f) {
             noticeTime -= dt;
         }
-        if (fireWait > 0f) {
-            fireWait -= dt;
+        if (fireCooldown > 0f) {
+            fireCooldown -= dt;
         }
-        if (dashWait > 0f) {
-            dashWait -= dt;
+        if (dashCooldown > 0f) {
+            dashCooldown -= dt;
         }
         if (comboTime > 0f) {
             comboTime -= dt;
         } else {
             combo = 0;
         }
-        shake = Math.max(0f, shake - dt * 2.2f);
+        shake = Math.max(0f, shake - dt * 2.5f);
 
-        float move = (right ? 1f : 0f) - (left ? 1f : 0f);
-        if (move != 0f) {
-            facing = move > 0 ? 1 : -1;
+        float direction = (rightHeld ? 1f : 0f) - (leftHeld ? 1f : 0f);
+        if (direction != 0f) {
+            facing = direction > 0 ? 1 : -1;
         }
-        vx = approach(vx, move * 335f, 2200f * dt);
+
+        float targetVx = direction * 340f;
+        playerVx = approach(playerVx, targetVx, 2200f * dt);
 
         if (jumpQueued) {
             if (grounded) {
-                vy = -690f;
+                playerVy = -740f;
                 grounded = false;
-                doubleJump = true;
-            } else if (mission >= 2 && doubleJump) {
-                vy = -610f;
-                doubleJump = false;
-                show("AIR HOP", 0.6f);
+                doubleJumpUnlocked = true;
+            } else if (mission >= 2 && doubleJumpUnlocked) {
+                playerVy = -680f;
+                doubleJumpUnlocked = false;
+                show("AIR HOP", 0.5f);
             }
             jumpQueued = false;
         }
 
-        if (dashQueued && dashWait <= 0f && mission >= 4) {
-            vx = facing * 760f;
-            vy = -85f;
-            dashWait = 0.68f;
-            invuln = Math.max(invuln, 0.24f);
-            shake = 0.16f;
+        if (dashQueued && dashCooldown <= 0f && mission >= 4) {
+            playerVx = facing * 760f;
+            playerVy = -90f;
+            dashCooldown = 0.7f;
+            invuln = Math.max(invuln, 0.25f);
+            shake = 0.18f;
             dashQueued = false;
         } else {
             dashQueued = false;
         }
 
-        if (shootHeld && fireWait <= 0f) {
-            fire();
+        if (shootHeld && fireCooldown <= 0f) {
+            fireShot();
         }
 
-        vy = Math.min(1050f, vy + GRAVITY * dt);
-        float oldFoot = y + 42f;
-        x += vx * dt;
-        y += vy * dt;
-        grounded = false;
+        float oldBottom = playerY + playerH;
+        playerVy = Math.min(1060f, playerVy + GRAVITY * dt);
+        playerY += playerVy * dt;
+        playerX += playerVx * dt;
 
-        for (Platform platform : roofs) {
-            if (x + 18f > platform.x && x - 18f < platform.x + platform.w && oldFoot <= platform.y + 3f && y + 42f >= platform.y && vy >= 0f) {
-                y = platform.y - 42f;
-                vy = 0f;
-                grounded = true;
-                doubleJump = true;
+        grounded = false;
+        for (Platform platform : platforms) {
+            if (rectCollides(playerX, playerY, playerW, playerH, platform.x, platform.y, platform.w, platform.h)) {
+                float playerBottom = playerY + playerH;
+                float platformTop = platform.y;
+                if (oldBottom <= platformTop + 8f && playerVy >= 0f && playerBottom >= platformTop && playerY < platformTop + platform.h) {
+                    playerY = platform.y - playerH;
+                    playerVy = 0f;
+                    grounded = true;
+                    doubleJumpUnlocked = true;
+                }
             }
         }
 
-        x = Math.max(20f, Math.min(worldW - 60f, x));
-        cam = Math.max(0f, Math.min(worldW - W, x - 390f));
+        playerX = clamp(playerX, 20f, worldW - playerW - 20f);
+        camX = clamp(playerX - 420f, 0f, worldW - VIEW_W);
 
-        for (Flag flag : flags) {
-            if (!flag.active && Math.abs(x - flag.x) < 35f && Math.abs(y - flag.y) < 56f) {
-                flag.active = true;
-                checkpointX = flag.x;
-                checkpointY = flag.y;
-                show("CHECKPOINT", 1.2f);
+        for (Checkpoint checkpoint : checkpoints) {
+            if (!checkpoint.active && Math.abs(playerX - checkpoint.x) < 32f && Math.abs(playerY - checkpoint.y) < 65f) {
+                checkpoint.active = true;
+                checkpointX = checkpoint.x;
+                checkpointY = checkpoint.y;
+                show("CHECKPOINT", 1.1f);
                 haptic(HapticFeedbackConstants.CONFIRM);
             }
         }
 
-        for (Token token : tokens) {
-            if (!token.taken && Math.abs(x - token.x) < 30f && Math.abs(y - token.y) < 48f) {
-                token.taken = true;
-                tokensTotal++;
-                tokensThisRun++;
-                score += 50;
+        for (Pickup pickup : pickups) {
+            if (!pickup.taken && Math.abs(playerX - pickup.x) < 30f && Math.abs(playerY - pickup.y) < 34f) {
+                pickup.taken = true;
+                score += 100;
+                tokensThisRun += 1;
+                tokensTotal += 1;
                 prefs.edit().putInt("tokens", tokensTotal).apply();
                 show("TOKEN +1", 0.8f);
             }
         }
 
         for (Enemy enemy : enemies) {
-            if (enemy.alive) {
-                enemy.x += enemy.v * dt;
-                if (enemy.x < enemy.home - 92f || enemy.x > enemy.home + 92f) {
-                    enemy.v = -enemy.v;
+            if (!enemy.alive) {
+                continue;
+            }
+            enemy.x += enemy.vx * dt;
+            if (enemy.x <= enemy.minX || enemy.x >= enemy.maxX) {
+                enemy.vx *= -1f;
+            }
+
+            if (rectCollides(playerX, playerY, playerW, playerH, enemy.x, enemy.y, enemy.w, enemy.h)) {
+                hurtPlayer();
+            }
+        }
+
+        for (Shot shot : shots) {
+            shot.x += shot.vx * dt;
+            shot.life -= dt;
+            for (Enemy enemy : enemies) {
+                if (enemy.alive && rectCollides(shot.x - 4f, shot.y - 4f, 8f, 8f, enemy.x, enemy.y, enemy.w, enemy.h)) {
+                    enemy.alive = false;
+                    kills++;
+                    score += 150;
+                    shot.life = 0f;
+                    show("TARGET DOWN", 0.4f);
+                    break;
                 }
-                if (invuln <= 0f && Math.abs(x - enemy.x) < 34f && Math.abs(y - enemy.y) < 52f) {
-                    damage();
-                }
+            }
+        }
+
+        for (int i = shots.size() - 1; i >= 0; i--) {
+            if (shots.get(i).life <= 0f) {
+                shots.remove(i);
             }
         }
 
@@ -336,98 +372,23 @@ public final class GameView extends View {
             invuln -= dt;
         }
 
-        for (int i = shots.size() - 1; i >= 0; i--) {
-            Shot shot = shots.get(i);
-            shot.x += shot.v * dt;
-            shot.life -= dt;
-            boolean hit = false;
-
-            for (Enemy enemy : enemies) {
-                if (enemy.alive && Math.abs(shot.x - enemy.x) < 27f && Math.abs(shot.y - (enemy.y - 20f)) < 43f) {
-                    enemy.hp -= 1f;
-                    hit = true;
-                    combo++;
-                    comboTime = 1.25f;
-                    score += 15;
-                    if (enemy.hp <= 0f) {
-                        enemy.alive = false;
-                        kills++;
-                        score += 120;
-                        show("TARGET DOWN", 0.45f);
-                    }
-                    break;
-                }
-            }
-
-            if (hit || shot.life <= 0f) {
-                shots.remove(i);
-            }
+        if (playerY > VIEW_H + 260f) {
+            hurtPlayer();
         }
 
-        if (y > 820f) {
-            damage();
-            return;
-        }
-
-        if (x > worldW - 175f) {
-            if (kills >= targets()) {
-                screen = CLEAR;
-                unlocked = Math.max(unlocked, Math.min(11, mission + 1));
-                prefs.edit().putInt("unlocked", unlocked).putInt("tokens", tokensTotal).apply();
-                show("MISSION CLEAR", 1.2f);
-            } else {
-                show("KEEP CLEARING", 0.8f);
-                x = worldW - 175f;
-            }
+        if (playerX >= gateX && collectedAllTokens()) {
+            screen = CLEAR;
+            unlocked = Math.max(unlocked, Math.min(11, mission + 1));
+            prefs.edit().putInt("unlocked", unlocked).apply();
+            show("CITY CLEARED", 1.2f);
         }
     }
 
-    private float approach(float current, float target, float step) {
-        if (current < target) {
-            return Math.min(target, current + step);
-        }
-        return Math.max(target, current - step);
+    private boolean rectCollides(float ax, float ay, float aw, float ah, float bx, float by, float bw, float bh) {
+        return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
     }
 
-    private int targets() {
-        return Math.min(3, 1 + mission / 4);
-    }
-
-    private int accent() {
-        int district = mission / 4;
-        if (district == 0) {
-            return Color.rgb(255, 189, 99);
-        }
-        if (district == 1) {
-            return Color.rgb(99, 229, 204);
-        }
-        return Color.rgb(173, 145, 255);
-    }
-
-    private void fire() {
-        Enemy best = null;
-        float scoreValue = Float.MAX_VALUE;
-
-        for (Enemy enemy : enemies) {
-            if (enemy.alive) {
-                float dx = (enemy.x - x) * facing;
-                if (dx > 0f) {
-                    float q = dx + Math.abs(enemy.y - y) * 1.35f;
-                    if (q < scoreValue && q < 760f) {
-                        scoreValue = q;
-                        best = enemy;
-                    }
-                }
-            }
-        }
-
-        if (best != null) {
-            shots.add(new Shot(x + facing * 20f, y - 12f, facing * 620f));
-            fireWait = 0.18f;
-        }
-    }
-
-    private void damage() {
+    private void hurtPlayer() {
         if (invuln > 0f || screen != PLAY) {
             return;
         }
@@ -435,23 +396,50 @@ public final class GameView extends View {
         lives--;
         combo = 0;
         comboTime = 0f;
-        shake = 0.5f;
-        vx = 0f;
-        vy = 0f;
+        shake = 0.7f;
+        playerVx = 0f;
+        playerVy = 0f;
         shots.clear();
-        releaseAll();
-        dashWait = 0.2f;
+        releaseAllButtons();
 
         if (lives <= 0) {
             screen = FAIL;
             haptic(HapticFeedbackConstants.REJECT);
-            show("ROUTE INTERRUPTED", 1.2f);
-        } else {
-            x = checkpointX;
-            y = checkpointY;
-            invuln = 1.4f;
-            show("CHECKPOINT", 0.8f);
+            show("RUN FAILED", 1.2f);
+            return;
         }
+
+        playerX = checkpointX;
+        playerY = checkpointY;
+        invuln = 1.4f;
+        show("CHECKPOINT", 0.8f);
+    }
+
+    private void fireShot() {
+        float shotX = playerX + (facing > 0 ? playerW : -8f);
+        float shotY = playerY + playerH * 0.5f;
+        shots.add(new Shot(shotX, shotY, facing * 620f));
+        fireCooldown = 0.18f;
+    }
+
+    private boolean collectedAllTokens() {
+        for (Pickup pickup : pickups) {
+            if (!pickup.taken) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private float clamp(float v, float min, float max) {
+        return Math.min(Math.max(v, min), max);
+    }
+
+    private float approach(float current, float target, float step) {
+        if (current < target) {
+            return Math.min(target, current + step);
+        }
+        return Math.max(target, current - step);
     }
 
     private void show(String text, float seconds) {
@@ -463,7 +451,7 @@ public final class GameView extends View {
         try {
             performHapticFeedback(type);
         } catch (Exception ignored) {
-            // Some devices deny haptic access; fail silently.
+            // Silent on devices without haptic support.
         }
     }
 
@@ -475,7 +463,8 @@ public final class GameView extends View {
             case PLAY:
                 drawSky(c);
                 drawWorld(c);
-                drawTouchButtons(c);
+                drawHud(c);
+                drawGameButtons(c);
                 break;
             case PAUSE:
                 drawSky(c);
@@ -505,110 +494,106 @@ public final class GameView extends View {
     }
 
     private void drawSky(Canvas c) {
-        c.drawColor(Color.rgb(9, 15, 29));
-        for (int layer = 0; layer < 3; layer++) {
-            float off = (cam * (0.10f + layer * 0.13f)) % 240f;
-            for (int i = -1; i < 8; i++) {
-                float bx = i * 240f - off;
-                float h = 150f + (Math.floorMod(i + layer, 3) * 40f);
-                int tint = layer == 0 ? 0x3350A8E8 : (layer == 1 ? 0x223B7CFF : 0x1A4B6F9A);
-                paint.setColor(tint);
-                c.drawRect(bx, 560f - h, bx + 215f, 560f, paint);
-            }
+        c.drawColor(Color.rgb(8, 14, 28));
+        for (int i = 0; i < 8; i++) {
+            float x = (i * 210f - (camX * 0.2f)) % (VIEW_W + 240f);
+            paint.setColor(i % 2 == 0 ? 0x1A2D4A7A : 0x1C3C5D84);
+            c.drawRect(x, 235f, x + 180f, VIEW_H, paint);
         }
     }
 
     private void drawWorld(Canvas c) {
         c.save();
-        float jx = shake > 0f ? (float) Math.sin(clock * 76f) * shake * 8f : 0f;
-        float jy = shake > 0f ? (float) Math.cos(clock * 61f) * shake * 5f : 0f;
-        c.translate(-cam + jx, jy);
+        c.translate(-camX, 0f);
 
-        int color = accent();
-        for (Platform platform : roofs) {
-            paint.setColor(0xFF233B57);
-            c.drawRect(platform.x, platform.y, platform.x + platform.w, platform.y + 12f, paint);
-            paint.setColor(color);
-            c.drawRect(platform.x + 2f, platform.y + 2f, platform.x + platform.w - 2f, platform.y + 8f, paint);
+        int accent = missionPalette();
+        for (Platform platform : platforms) {
+            paint.setColor(0xFF1E2E45);
+            c.drawRect(platform.x, platform.y, platform.x + platform.w, platform.y + platform.h, paint);
+            paint.setColor(accent);
+            c.drawRect(platform.x + 4f, platform.y + 4f, platform.x + platform.w - 4f, platform.y + 10f, paint);
         }
 
-        for (Flag flag : flags) {
-            drawFlag(c, flag);
+        for (Checkpoint checkpoint : checkpoints) {
+            drawCheckpoint(c, checkpoint);
         }
-        for (Token token : tokens) {
-            drawToken(c, token);
+        for (Pickup pickup : pickups) {
+            if (!pickup.taken) {
+                drawPickup(c, pickup);
+            }
         }
         for (Enemy enemy : enemies) {
             if (enemy.alive) {
                 drawEnemy(c, enemy);
             }
         }
-
         for (Shot shot : shots) {
             paint.setColor(0xFFFFD66E);
             c.drawCircle(shot.x, shot.y, 6f, paint);
         }
 
-        drawPlayer(c, x, y);
-        drawExit(c, worldW - 110f, 530f, color);
+        drawGate(c, gateX, 494f, accent);
+        drawPlayer(c, playerX, playerY);
         c.restore();
-        drawHud(c);
     }
 
     private void drawHud(Canvas c) {
-        panel(c, 18f, 15f, 520f, 82f, 0xCC101B30);
-        text(c, String.format(Locale.US, "DISTRICT %02d   ·   MISSION %02d", mission / 4 + 1, mission + 1),
-                18f, Color.WHITE, 34f, 45f);
-        text(c, String.format(Locale.US, "LIVES %d   ·   TOKEN %d   ·   SCORE %d   ·   KILLS %d/%d",
-                        lives, tokensTotal, score, kills, targets()), 18f, 0xFFB9CBE4, 34f, 72f);
+        panel(c, 18f, 18f, 560f, 78f, 0xCC0D1828);
+        text(c, String.format(Locale.US, "DISTRICT %02d   •   MISSION %02d", mission / 4 + 1, mission + 1),
+                18f, Color.WHITE, 34f, 50f);
+        text(c, String.format(Locale.US, "LIVES %d   •   TOKENS %d   •   SCORE %d   •   KILLS %d",
+                        lives, tokensTotal, score, kills), 18f, 0xFFB7C6D9, 34f, 76f);
         if (noticeTime > 0f) {
-            text(c, notice, 24f, 0xFFFFBD63, 650f, 52f);
+            text(c, notice, 22f, 0xFFFFC76B, 610f, 52f);
         }
     }
 
-    private void drawFlag(Canvas c, Flag flag) {
-        paint.setColor(flag.active ? 0xFF63E5CC : 0xFFA9B9CB);
-        c.drawRoundRect(flag.x - 3f, flag.y - 34f, flag.x + 3f, flag.y + 37f, 3f, 3f, paint);
-        paint.setColor(flag.active ? 0xFF63E5CC : 0xFFFFBD63);
+    private void drawCheckpoint(Canvas c, Checkpoint checkpoint) {
+        if (checkpoint.active) {
+            paint.setColor(0xFF63E5CC);
+        } else {
+            paint.setColor(0xFFB8C7D9);
+        }
+        c.drawRect(checkpoint.x - 3f, checkpoint.y - 40f, checkpoint.x + 3f, checkpoint.y + 18f, paint);
         Path path = new Path();
-        path.moveTo(flag.x + 8f, flag.y - 30f);
-        path.lineTo(flag.x + 8f, flag.y + 30f);
-        path.lineTo(flag.x + 30f, flag.y + 12f);
+        path.moveTo(checkpoint.x + 8f, checkpoint.y - 34f);
+        path.lineTo(checkpoint.x + 8f, checkpoint.y + 22f);
+        path.lineTo(checkpoint.x + 32f, checkpoint.y - 6f);
         path.close();
         c.drawPath(path, paint);
     }
 
-    private void drawToken(Canvas c, Token token) {
-        if (token.taken) {
-            return;
-        }
-        float bob = (float) Math.sin(clock * 4f + token.x) * 4f;
+    private void drawPickup(Canvas c, Pickup pickup) {
+        float bob = (float) Math.sin(clock * 4f + pickup.x) * 4f;
         paint.setColor(0x66FFDB72);
-        c.drawCircle(token.x, token.y + bob, 17f, paint);
+        c.drawCircle(pickup.x, pickup.y + bob, 14f, paint);
         paint.setColor(0xFFFFD66E);
         Path path = new Path();
-        path.moveTo(token.x, token.y - 12f + bob);
-        path.lineTo(token.x + 10f, token.y + bob);
-        path.lineTo(token.x, token.y + 12f + bob);
-        path.lineTo(token.x - 10f, token.y + bob);
+        path.moveTo(pickup.x, pickup.y - 10f + bob);
+        path.lineTo(pickup.x + 8f, pickup.y + bob);
+        path.lineTo(pickup.x, pickup.y + 10f + bob);
+        path.lineTo(pickup.x - 8f, pickup.y + bob);
         path.close();
         c.drawPath(path, paint);
     }
 
     private void drawEnemy(Canvas c, Enemy enemy) {
-        float a = enemy.x;
-        float b = enemy.y;
-        paint.setColor(Color.rgb(189, 83, 105));
-        c.drawRoundRect(a - 18f, b - 20f, a + 18f, b + 28f, 10f, 10f, paint);
-        paint.setColor(Color.rgb(232, 174, 144));
-        c.drawCircle(a, b - 32f, 12f, paint);
-        paint.setColor(Color.rgb(46, 42, 58));
-        c.drawRect(a - 16f, b + 12f, a + 16f, b + 18f, paint);
+        paint.setColor(Color.rgb(193, 82, 96));
+        c.drawRoundRect(enemy.x, enemy.y, enemy.x + enemy.w, enemy.y + enemy.h, 10f, 10f, paint);
+        paint.setColor(Color.rgb(228, 181, 154));
+        c.drawCircle(enemy.x + enemy.w * 0.5f, enemy.y + 8f, 9f, paint);
     }
 
-    private void drawPlayer(Canvas c, float a, float b) {
+    private void drawGate(Canvas c, float x, float y, int accent) {
+        paint.setColor(Color.argb(50, Color.red(accent), Color.green(accent), Color.blue(accent)));
+        c.drawCircle(x, y, 44f + (float) Math.sin(clock * 3.2f) * 4f, paint);
+        paint.setColor(accent);
+        c.drawCircle(x, y, 18f, paint);
+    }
+
+    private void drawPlayer(Canvas c, float x, float y) {
         c.save();
-        c.translate(a, b);
+        c.translate(x, y);
         if (facing < 0) {
             c.scale(-1f, 1f);
         }
@@ -617,142 +602,138 @@ public final class GameView extends View {
             return;
         }
 
-        paint.setColor(0xFFEAEEF7);
-        c.drawRoundRect(-18f, -42f, 18f, 18f, 10f, 10f, paint);
-        paint.setColor(0xFF3D5AFB);
-        c.drawRoundRect(-12f, -20f, 12f, 8f, 8f, 8f, paint);
-        paint.setColor(0xFFFFBD63);
-        c.drawRect(-10f, -8f, 10f, 10f, paint);
-        paint.setColor(0xFF2C3347);
-        c.drawRect(-14f, 12f, -6f, 32f, paint);
-        c.drawRect(6f, 12f, 14f, 32f, paint);
-        paint.setColor(0xFF6A82FF);
-        c.drawRect(-2f, -42f, -10f, -60f, paint);
-        c.drawRect(2f, -42f, 10f, -60f, paint);
+        paint.setColor(0xFFEEF2F8);
+        c.drawRoundRect(0f, 0f, playerW, playerH, 8f, 8f, paint);
+        paint.setColor(0xFF5878FF);
+        c.drawRect(6f, 10f, playerW - 6f, 24f, paint);
+        paint.setColor(0xFFFFC767);
+        c.drawRect(7f, playerH - 12f, playerW - 7f, playerH - 2f, paint);
         c.restore();
     }
 
-    private void drawExit(Canvas c, float a, float b, int color) {
-        paint.setColor(Color.argb(50, Color.red(color), Color.green(color), Color.blue(color)));
-        c.drawCircle(a, b, 45f + (float) Math.sin(clock * 3f) * 4f, paint);
-        paint.setColor(color);
-        c.drawCircle(a, b, 18f, paint);
-    }
-
-    private void drawTouchButtons(Canvas c) {
-        button(c, 68f, 610f, 82f, 68f, "◀", 0xDD253C5A);
-        button(c, 160f, 610f, 82f, 68f, "▶", 0xDD253C5A);
-        button(c, 972f, 602f, 104f, 72f, mission >= 2 ? "HOP" : "JUMP", 0xDD344D70);
-        button(c, 1086f, 602f, 104f, 72f, "DASH", 0xDD344D70);
-        button(c, 1198f, 602f, 104f, 72f, "FIRE", 0xDD344D70);
+    private void drawGameButtons(Canvas c) {
+        button(c, 42f, 610f, 128f, 72f, "◀", 0xDD2B3958);
+        button(c, 182f, 610f, 128f, 72f, "▶", 0xDD2B3958);
+        button(c, 1008f, 618f, 118f, 70f, "JUMP", 0xDD3E5C9A);
+        button(c, 1138f, 618f, 118f, 70f, "DASH", 0xDD3E5C9A);
+        button(c, 1008f, 540f, 248f, 60f, "FIRE", 0xDD3E5C9A);
     }
 
     private void drawMenu(Canvas c) {
         shade(c);
-        text(c, "ROOFTOP RUN", 57f, 0xFFFFBF68, 110f, 178f);
-        text(c, "CITY ABOVE THE STREETS", 20f, 0xFF99B1CC, 115f, 221f);
-        text(c, "A 2.5D PLATFORM SHOOTER", 17f, 0xFFB8C7D9, 115f, 258f);
-        button(c, 100f, 332f, 260f, 74f, "START", 0xFFFFBD63);
-        button(c, 100f, 423f, 260f, 64f, "MISSIONS", 0xDD253C5A);
-        button(c, 100f, 500f, 260f, 64f, "FIELD GUIDE", 0xDD253C5A);
+        text(c, "SKYLINE SPRINT", 62f, 0xFFFFC76B, 120f, 180f);
+        text(c, "DIGITAL ROOFTOP RUNNER", 20f, 0xFFB2C3DA, 122f, 228f);
+        button(c, 120f, 330f, 280f, 76f, "START", 0xFFFFC76B);
+        button(c, 120f, 425f, 280f, 64f, "MISSIONS", 0xDD2B3958);
+        button(c, 120f, 502f, 280f, 64f, "FIELD GUIDE", 0xDD2B3958);
     }
 
     private void drawMap(Canvas c) {
         shade(c);
-        text(c, "MISSION BOARD", 48f, 0xFFFFBF68, 82f, 104f);
+        text(c, "MISSION BOARD", 48f, 0xFFFFC76B, 90f, 112f);
         for (int i = 0; i < 12; i++) {
             int col = i % 4;
             int row = i / 4;
-            float bx = 82f + col * 286f;
-            float by = 142f + row * 140f;
+            float bx = 92f + col * 270f;
+            float by = 150f + row * 150f;
             boolean open = i <= unlocked;
-            panel(c, bx, by, 220f, 104f, open ? 0xCC263C58 : 0xCC111B2A);
+            panel(c, bx, by, 210f, 110f, open ? 0xCC243B58 : 0xCC121B2C);
             text(c, String.format(Locale.US, "%02d", i + 1), 18f, Color.WHITE, bx + 18f, by + 32f);
-            text(c, name(i), 20f, open ? 0xFFF5C96C : 0xFF6F7E94, bx + 18f, by + 62f);
+            text(c, zoneName(i), 20f, open ? 0xFFF2C77A : 0xFF7E8BA6, bx + 18f, by + 64f);
             if (!open) {
-                text(c, "LOCKED", 16f, 0xFF72839E, bx + 18f, by + 86f);
+                text(c, "LOCKED", 16f, 0xFF73859E, bx + 18f, by + 88f);
             }
         }
     }
 
-    private String name(int index) {
+    private String zoneName(int index) {
         String[] names = {
-                "First Contact", "Awning Alley", "Fire Escape", "Neon Crossing",
-                "Cable Run", "Rain Check", "The Long Drop", "Billboard Run",
-                "Sky Garden", "Cloudline", "Last Delivery", "Highline"
+                "Old Town", "Cable Plaza", "Glass Ward", "Rain Run",
+                "Basilica Pass", "Signal Arc", "Sky Market", "North Lift",
+                "Sun Deck", "Cloudline", "Horizon Gate", "Final Jump"
         };
         return names[index];
     }
 
     private void drawGuide(Canvas c) {
         shade(c);
-        text(c, "FIELD GUIDE", 48f, 0xFFFFBF68, 90f, 118f);
+        text(c, "FIELD GUIDE", 48f, 0xFFFFC76B, 100f, 120f);
         String[] entries = {
-                "MOVE   Use the two left buttons to cross rooftops.",
-                "JUMP   Tap before a ledge. Hold briefly for a larger hop.",
-                "DASH   Unlocks after mission 4 and helps dodge danger.",
-                "SHOOT   Fire at the nearest target ahead.",
-                "SAVE   Checkpoints store progress and keep runs alive."
+                "MOVE   Left/right buttons to cross rooftops.",
+                "JUMP   Tap to leap from platform to platform.",
+                "DASH   Use after mission 4 to burst through danger.",
+                "FIRE   Clear sentries before they reach you.",
+                "GOAL   Grab all sparks and reach the glowing gate."
         };
         for (int i = 0; i < entries.length; i++) {
-            text(c, entries[i], 18f, 0xFFE4EDF7, 96f, 170f + i * 42f);
+            text(c, entries[i], 18f, 0xFFE5EDF9, 100f, 180f + i * 42f);
         }
-        button(c, 96f, 600f, 260f, 60f, "BACK", 0xFFFFBD63);
+        button(c, 100f, 610f, 250f, 60f, "BACK", 0xFFFFC76B);
     }
 
     private void drawPauseOverlay(Canvas c) {
         shade(c);
-        text(c, "PAUSED", 52f, 0xFFFFBF68, 100f, 218f);
-        button(c, 95f, 283f, 300f, 65f, "RESUME", 0xFFFFBD63);
-        button(c, 95f, 362f, 300f, 58f, "FIELD GUIDE", 0xDD253C5A);
-        button(c, 95f, 434f, 300f, 58f, "MISSION BOARD", 0xDD253C5A);
-        button(c, 95f, 507f, 300f, 58f, "MAIN MENU", 0xDD253C5A);
+        text(c, "PAUSED", 52f, 0xFFFFC76B, 100f, 220f);
+        button(c, 100f, 285f, 310f, 62f, "RESUME", 0xFFFFC76B);
+        button(c, 100f, 365f, 310f, 58f, "GUIDE", 0xDD2B3958);
+        button(c, 100f, 438f, 310f, 58f, "MISSION BOARD", 0xDD2B3958);
+        button(c, 100f, 510f, 310f, 58f, "MAIN MENU", 0xDD2B3958);
     }
 
     private void drawClearOverlay(Canvas c) {
         shade(c);
-        text(c, "MISSION COMPLETE", 45f, 0xFF63E5CC, 94f, 215f);
-        text(c, String.format(Locale.US, "Targets cleared: %d / %d", kills, targets()), 21f, Color.WHITE, 100f, 268f);
-        text(c, String.format(Locale.US, "Tokens this run: %d", tokensThisRun), 20f, 0xFFBFEAE0, 100f, 306f);
-        button(c, 95f, 370f, 300f, 60f, "NEXT MISSION", 0xFFFFBD63);
-        button(c, 95f, 444f, 300f, 58f, "MISSION BOARD", 0xDD253C5A);
+        text(c, "ZONE CLEARED", 45f, 0xFF63E5CC, 96f, 220f);
+        text(c, String.format(Locale.US, "Spirits collected: %d", tokensThisRun), 20f, 0xFFBDEFE8, 100f, 272f);
+        button(c, 96f, 370f, 300f, 62f, "NEXT ZONE", 0xFFFFC76B);
+        button(c, 96f, 448f, 300f, 58f, "MISSION BOARD", 0xDD2B3958);
     }
 
     private void drawFailOverlay(Canvas c) {
         shade(c);
-        text(c, "ROUTE INTERRUPTED", 42f, 0xFFFF8389, 95f, 218f);
-        text(c, "Checkpoint reached. Ready for another run?", 20f, 0xFFE0E8F1, 100f, 270f);
-        button(c, 95f, 330f, 310f, 65f, "RETRY", 0xFFFFBD63);
-        button(c, 95f, 410f, 310f, 58f, "MISSION BOARD", 0xDD253C5A);
-        button(c, 95f, 482f, 310f, 58f, "MAIN MENU", 0xDD253C5A);
+        text(c, "ROUTE LOST", 46f, 0xFFFF6B7E, 98f, 220f);
+        text(c, "The skyline is still open. Try again.", 20f, 0xFFE4ECF9, 102f, 274f);
+        button(c, 98f, 335f, 300f, 62f, "RETRY", 0xFFFFC76B);
+        button(c, 98f, 418f, 300f, 58f, "MISSION BOARD", 0xDD2B3958);
+        button(c, 98f, 491f, 300f, 58f, "MAIN MENU", 0xDD2B3958);
     }
 
     private void shade(Canvas c) {
         paint.setColor(0xCC07101F);
-        c.drawRect(0f, 0f, W, H, paint);
+        c.drawRect(0f, 0f, VIEW_W, VIEW_H, paint);
     }
 
     private void button(Canvas c, float x, float y, float w, float h, String text, int color) {
         paint.setColor(0x55000000);
-        c.drawRoundRect(x, y + 4f, x + w, y + h + 4f, 16f, 16f, paint);
+        c.drawRoundRect(x, y + 5f, x + w, y + h + 5f, 18f, 18f, paint);
         paint.setColor(color);
         c.drawRoundRect(x, y, x + w, y + h, 18f, 18f, paint);
-        paint.setColor(0xFFECF3FF);
-        paint.setTextSize(28f);
+        paint.setColor(0xFFEDF3FF);
+        paint.setTextSize(26f);
         paint.setTypeface(android.graphics.Typeface.create("sans-serif-medium", 0));
         c.drawText(text, x + (w / 2f) - paint.measureText(text) / 2f, y + h / 2f + 10f, paint);
     }
 
     private void panel(Canvas c, float x, float y, float w, float h, int color) {
         paint.setColor(color);
-        c.drawRoundRect(x, y, x + w, y + h, 15f, 15f, paint);
+        c.drawRoundRect(x, y, x + w, y + h, 16f, 16f, paint);
     }
 
     private void text(Canvas c, String text, float size, int color, float x, float y) {
         paint.setColor(color);
         paint.setTextSize(size);
-        paint.setTypeface(android.graphics.Typeface.create("sans-serif-medium", 0));
+        paint.setTypeface(android.graphics.TypeFace.create("sans-serif-medium", 0));
         c.drawText(text, x, y, paint);
+    }
+
+    private int missionPalette() {
+        int district = mission / 4;
+        if (district == 0) {
+            return Color.rgb(255, 190, 103);
+        }
+        if (district == 1) {
+            return Color.rgb(102, 235, 207);
+        }
+        return Color.rgb(178, 144, 255);
     }
 
     @Override
@@ -765,11 +746,11 @@ public final class GameView extends View {
 
         if (screen == MENU) {
             if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
-                if (hit(tx, ty, 100f, 332f, 260f, 74f)) {
+                if (hit(tx, ty, 120f, 330f, 280f, 76f)) {
                     startMission(0);
-                } else if (hit(tx, ty, 100f, 423f, 260f, 64f)) {
+                } else if (hit(tx, ty, 120f, 425f, 280f, 64f)) {
                     screen = MAP;
-                } else if (hit(tx, ty, 100f, 500f, 260f, 64f)) {
+                } else if (hit(tx, ty, 120f, 502f, 280f, 64f)) {
                     guideBack = MENU;
                     screen = GUIDE;
                 }
@@ -782,9 +763,9 @@ public final class GameView extends View {
                 for (int i = 0; i < 12; i++) {
                     int col = i % 4;
                     int row = i / 4;
-                    float bx = 82f + col * 286f;
-                    float by = 142f + row * 140f;
-                    if (hit(tx, ty, bx, by, 220f, 104f) && i <= unlocked) {
+                    float bx = 92f + col * 270f;
+                    float by = 150f + row * 150f;
+                    if (i <= unlocked && hit(tx, ty, bx, by, 210f, 110f)) {
                         startMission(i);
                         return true;
                     }
@@ -796,7 +777,7 @@ public final class GameView extends View {
 
         if (screen == GUIDE) {
             if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
-                if (hit(tx, ty, 96f, 600f, 260f, 60f)) {
+                if (hit(tx, ty, 100f, 610f, 250f, 60f)) {
                     screen = guideBack;
                 }
             }
@@ -805,15 +786,15 @@ public final class GameView extends View {
 
         if (screen == PAUSE) {
             if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
-                if (hit(tx, ty, 95f, 283f, 300f, 65f)) {
+                if (hit(tx, ty, 100f, 285f, 310f, 62f)) {
                     screen = PLAY;
                     lastFrame = SystemClock.uptimeMillis();
-                } else if (hit(tx, ty, 95f, 362f, 300f, 58f)) {
+                } else if (hit(tx, ty, 100f, 365f, 310f, 58f)) {
                     guideBack = PAUSE;
                     screen = GUIDE;
-                } else if (hit(tx, ty, 95f, 434f, 300f, 58f)) {
+                } else if (hit(tx, ty, 100f, 438f, 310f, 58f)) {
                     screen = MAP;
-                } else if (hit(tx, ty, 95f, 507f, 300f, 58f)) {
+                } else if (hit(tx, ty, 100f, 510f, 310f, 58f)) {
                     screen = MENU;
                 }
             }
@@ -822,9 +803,9 @@ public final class GameView extends View {
 
         if (screen == CLEAR) {
             if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
-                if (hit(tx, ty, 95f, 370f, 300f, 60f)) {
+                if (hit(tx, ty, 96f, 370f, 300f, 62f)) {
                     startMission(Math.min(11, mission + 1));
-                } else if (hit(tx, ty, 95f, 444f, 300f, 58f)) {
+                } else if (hit(tx, ty, 96f, 448f, 300f, 58f)) {
                     screen = MAP;
                 }
             }
@@ -833,11 +814,11 @@ public final class GameView extends View {
 
         if (screen == FAIL) {
             if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
-                if (hit(tx, ty, 95f, 330f, 310f, 65f)) {
+                if (hit(tx, ty, 98f, 335f, 300f, 62f)) {
                     startMission(mission);
-                } else if (hit(tx, ty, 95f, 410f, 310f, 58f)) {
+                } else if (hit(tx, ty, 98f, 418f, 300f, 58f)) {
                     screen = MAP;
-                } else if (hit(tx, ty, 95f, 482f, 310f, 58f)) {
+                } else if (hit(tx, ty, 98f, 491f, 300f, 58f)) {
                     screen = MENU;
                 }
             }
@@ -846,27 +827,27 @@ public final class GameView extends View {
 
         if (screen == PLAY) {
             if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
-                if (hit(tx, ty, 68f, 610f, 82f, 68f)) {
+                if (hit(tx, ty, 42f, 610f, 128f, 72f)) {
                     leftId = pointerId;
-                    left = true;
-                } else if (hit(tx, ty, 160f, 610f, 82f, 68f)) {
+                    leftHeld = true;
+                } else if (hit(tx, ty, 182f, 610f, 128f, 72f)) {
                     rightId = pointerId;
-                    right = true;
-                } else if (hit(tx, ty, 972f, 602f, 104f, 72f)) {
+                    rightHeld = true;
+                } else if (hit(tx, ty, 1008f, 618f, 118f, 70f)) {
                     jumpId = pointerId;
                     jumpHeld = true;
                     jumpQueued = true;
-                } else if (hit(tx, ty, 1086f, 602f, 104f, 72f)) {
+                } else if (hit(tx, ty, 1138f, 618f, 118f, 70f)) {
                     dashId = pointerId;
                     dashQueued = true;
-                } else if (hit(tx, ty, 1198f, 602f, 104f, 72f)) {
+                } else if (hit(tx, ty, 1008f, 540f, 248f, 60f)) {
                     shootId = pointerId;
                     shootHeld = true;
                 }
             }
 
             if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) {
-                release(pointerId);
+                releasePointer(pointerId);
             }
 
             if (action == MotionEvent.ACTION_MOVE) {
@@ -874,17 +855,16 @@ public final class GameView extends View {
                     int pid = event.getPointerId(i);
                     float mx = event.getX(i);
                     float my = event.getY(i);
-
-                    if (pid == leftId && !hit(mx, my, 68f, 610f, 82f, 68f)) {
-                        left = false;
+                    if (pid == leftId && !hit(mx, my, 42f, 610f, 128f, 72f)) {
+                        leftHeld = false;
                     }
-                    if (pid == rightId && !hit(mx, my, 160f, 610f, 82f, 68f)) {
-                        right = false;
+                    if (pid == rightId && !hit(mx, my, 182f, 610f, 128f, 72f)) {
+                        rightHeld = false;
                     }
-                    if (pid == jumpId && !hit(mx, my, 972f, 602f, 104f, 72f)) {
+                    if (pid == jumpId && !hit(mx, my, 1008f, 618f, 118f, 70f)) {
                         jumpHeld = false;
                     }
-                    if (pid == shootId && !hit(mx, my, 1198f, 602f, 104f, 72f)) {
+                    if (pid == shootId && !hit(mx, my, 1008f, 540f, 248f, 60f)) {
                         shootHeld = false;
                     }
                 }
@@ -897,14 +877,14 @@ public final class GameView extends View {
         return super.onTouchEvent(event);
     }
 
-    private void release(int pointerId) {
+    private void releasePointer(int pointerId) {
         if (pointerId == leftId) {
             leftId = -1;
-            left = false;
+            leftHeld = false;
         }
         if (pointerId == rightId) {
             rightId = -1;
-            right = false;
+            rightHeld = false;
         }
         if (pointerId == jumpId) {
             jumpId = -1;
@@ -920,14 +900,14 @@ public final class GameView extends View {
         }
     }
 
-    private void releaseAll() {
+    private void releaseAllButtons() {
         leftId = -1;
         rightId = -1;
         jumpId = -1;
         dashId = -1;
         shootId = -1;
-        left = false;
-        right = false;
+        leftHeld = false;
+        rightHeld = false;
         jumpHeld = false;
         shootHeld = false;
     }
@@ -936,45 +916,41 @@ public final class GameView extends View {
         return x >= bx && x <= bx + w && y >= by && y <= by + h;
     }
 
-    private void makeWorld() {
-        roofs.clear();
-        roofs.add(new Platform(90f, 560f, 220f));
-        roofs.add(new Platform(360f, 492f, 210f));
-        roofs.add(new Platform(610f, 520f, 260f));
-        roofs.add(new Platform(930f, 470f, 260f));
-        roofs.add(new Platform(1230f, 540f, 230f));
-        roofs.add(new Platform(1480f, 460f, 210f));
-        roofs.add(new Platform(1710f, 388f, 220f));
-        roofs.add(new Platform(1950f, 470f, 240f));
-        roofs.add(new Platform(2230f, 430f, 190f));
-        roofs.add(new Platform(2460f, 500f, 250f));
-        roofs.add(new Platform(2750f, 420f, 208f));
-        roofs.add(new Platform(3000f, 520f, 320f));
-        roofs.add(new Platform(3420f, 490f, 230f));
-        roofs.add(new Platform(3780f, 440f, 260f));
+    private void buildWorld() {
+        platforms.clear();
+        platforms.add(new Platform(0f, 620f, 420f, 100f));
+        platforms.add(new Platform(470f, 620f, 360f, 100f));
+        platforms.add(new Platform(930f, 560f, 220f, 20f));
+        platforms.add(new Platform(1280f, 500f, 200f, 20f));
+        platforms.add(new Platform(1640f, 560f, 220f, 20f));
+        platforms.add(new Platform(2010f, 500f, 220f, 20f));
+        platforms.add(new Platform(2360f, 560f, 220f, 20f));
+        platforms.add(new Platform(2720f, 470f, 220f, 20f));
+        platforms.add(new Platform(3110f, 540f, 240f, 20f));
+        platforms.add(new Platform(3460f, 490f, 220f, 20f));
+        platforms.add(new Platform(3700f, 620f, 540f, 100f));
 
-        flags.clear();
-        flags.add(new Flag(280f, 512f));
-        flags.add(new Flag(920f, 432f));
-        flags.add(new Flag(1880f, 432f));
-        flags.add(new Flag(2820f, 382f));
-        flags.add(new Flag(3480f, 450f));
+        checkpoints.clear();
+        checkpoints.add(new Checkpoint(240f, 560f));
+        checkpoints.add(new Checkpoint(1490f, 460f));
+        checkpoints.add(new Checkpoint(2860f, 430f));
+        checkpoints.add(new Checkpoint(3600f, 560f));
 
-        tokens.clear();
-        tokens.add(new Token(220f, 514f));
-        tokens.add(new Token(690f, 478f));
-        tokens.add(new Token(1120f, 432f));
-        tokens.add(new Token(1605f, 340f));
-        tokens.add(new Token(2280f, 392f));
-        tokens.add(new Token(3010f, 472f));
-        tokens.add(new Token(3620f, 402f));
+        pickups.clear();
+        pickups.add(new Pickup(210f, 575f));
+        pickups.add(new Pickup(1120f, 520f));
+        pickups.add(new Pickup(1760f, 520f));
+        pickups.add(new Pickup(2530f, 520f));
+        pickups.add(new Pickup(3240f, 500f));
+        pickups.add(new Pickup(3920f, 580f));
 
         enemies.clear();
-        enemies.add(new Enemy(480f, 510f, 440f, 90f));
-        enemies.add(new Enemy(1290f, 500f, 1290f, 120f));
-        enemies.add(new Enemy(1765f, 350f, 1765f, 85f));
-        enemies.add(new Enemy(2560f, 470f, 2560f, 110f));
-        enemies.add(new Enemy(3310f, 450f, 3310f, 95f));
-        enemies.add(new Enemy(3920f, 410f, 3920f, 115f));
+        enemies.add(new Enemy(540f, 588f, 490f, 820f, 90f));
+        enemies.add(new Enemy(1360f, 468f, 1300f, 1460f, 130f));
+        enemies.add(new Enemy(1900f, 528f, 1670f, 2050f, 110f));
+        enemies.add(new Enemy(2600f, 528f, 2380f, 2780f, 120f));
+        enemies.add(new Enemy(3300f, 508f, 3120f, 3520f, 125f));
+
+        gateX = worldW - 160f;
     }
 }
